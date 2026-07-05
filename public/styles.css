@@ -164,6 +164,22 @@ body {
   line-height: 1;
 }
 .card-change { font-size: 12px; margin-top: 5px; }
+.card-volume { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--up);
+  margin-right: 4px;
+  vertical-align: middle;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
 
 .card-sparkline-wrapper {
   height: 58px;

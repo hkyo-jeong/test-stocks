@@ -28,6 +28,12 @@ let mainChart = null;
 let watchlist = JSON.parse(localStorage.getItem('watchlist') || '[]');
 const sparklineCharts = new Map(); // symbol → Chart
 
+// ─── 실시간 폴링 (토스 Open API는 REST만 제공하므로 주기적으로 다시 조회) ───────
+const DETAIL_POLL_MS = 5000;
+const GRID_POLL_MS = 10000;
+let detailPollTimer = null;
+let gridPollTimer = null;
+
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function fmt(num) {
   if (num == null) return '-';
@@ -125,6 +131,7 @@ async function renderWatchlistGrid() {
       </div>
       <div class="card-price" id="cp-${w.symbol}" style="color:var(--text-muted)">-</div>
       <div class="card-change" id="cc-${w.symbol}" style="color:var(--text-muted)">-</div>
+      <div class="card-volume" id="cv-${w.symbol}"><span class="live-dot"></span>거래량 -</div>
       <div class="card-sparkline-wrapper">
         <canvas id="spark-${w.symbol}"></canvas>
       </div>
@@ -144,30 +151,52 @@ async function renderWatchlistGrid() {
   // 가격 + 스파크라인 병렬 로드
   await Promise.all(
     watchlist.map(async (w) => {
+      const price = await refreshCardPrice(w.symbol);
+      if (!price) return;
       try {
-        const [price, history] = await Promise.all([
-          api.getPrice(w.symbol),
-          api.getHistory(w.symbol, 'D', 30),
-        ]);
-
-        const priceEl = document.getElementById(`cp-${w.symbol}`);
-        const changeEl = document.getElementById(`cc-${w.symbol}`);
-        if (priceEl) {
-          priceEl.textContent = fmt(price.currentPrice);
-          priceEl.className = `card-price ${changeClass(price.changePrice)}`;
-        }
-        if (changeEl) {
-          changeEl.textContent = `${changeSign(price.changePrice)} (${changeSign(Math.round(price.changeRate * 100) / 100)}%)`;
-          changeEl.className = `card-change ${changeClass(price.changePrice)}`;
-        }
-
+        const history = await api.getHistory(w.symbol, 'D', 30);
         createSparkline(w.symbol, history);
       } catch {
-        const el = document.getElementById(`cp-${w.symbol}`);
-        if (el) { el.textContent = '오류'; el.style.color = 'var(--down)'; }
+        // 스파크라인은 부가 정보이므로 실패해도 가격 표시는 유지한다
       }
     })
   );
+
+  startGridPolling();
+}
+
+// 카드 한 장의 현재가/등락률/거래량만 갱신 (스파크라인은 건드리지 않음 → 폴링에서 재사용)
+async function refreshCardPrice(symbol) {
+  const priceEl = document.getElementById(`cp-${symbol}`);
+  const changeEl = document.getElementById(`cc-${symbol}`);
+  const volEl = document.getElementById(`cv-${symbol}`);
+
+  try {
+    const price = await api.getPrice(symbol);
+
+    if (priceEl) {
+      priceEl.textContent = fmt(price.currentPrice);
+      priceEl.className = `card-price ${changeClass(price.changePrice)}`;
+    }
+    if (changeEl) {
+      changeEl.textContent = `${changeSign(price.changePrice)} (${changeSign(Math.round(price.changeRate * 100) / 100)}%)`;
+      changeEl.className = `card-change ${changeClass(price.changePrice)}`;
+    }
+    if (volEl) volEl.innerHTML = `<span class="live-dot"></span>거래량 ${fmt(price.volume)}`;
+
+    return price;
+  } catch {
+    if (priceEl && priceEl.textContent === '-') { priceEl.textContent = '오류'; priceEl.style.color = 'var(--down)'; }
+    return null;
+  }
+}
+
+function startGridPolling() {
+  if (gridPollTimer) return;
+  gridPollTimer = setInterval(() => {
+    if (document.hidden || watchlist.length === 0) return;
+    watchlist.forEach((w) => refreshCardPrice(w.symbol));
+  }, GRID_POLL_MS);
 }
 
 // ─── Select Stock (카드 클릭 → 상세) ─────────────────────────────────────────
@@ -192,12 +221,44 @@ async function selectStock(symbol) {
     renderStockInfo(price);
     renderMainChart(history);
     updateWatchlistBtn(symbol);
+    startDetailPolling(symbol);
   } catch (e) {
     alert('종목 조회 오류: ' + e.message);
     return;
   }
 
   detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// 상세 화면이 열려있는 동안 현재가/거래량을 주기적으로 다시 조회해 갱신한다.
+function stopDetailPolling() {
+  if (detailPollTimer) { clearInterval(detailPollTimer); detailPollTimer = null; }
+}
+
+function startDetailPolling(symbol) {
+  stopDetailPolling();
+  detailPollTimer = setInterval(async () => {
+    if (document.hidden || currentSymbol !== symbol) return;
+    try {
+      const price = await api.getPrice(symbol);
+      renderStockInfo(price);
+      updateMainChartLive(price);
+    } catch {
+      // 폴링 실패는 조용히 넘어가고 다음 주기에 재시도한다
+    }
+  }, DETAIL_POLL_MS);
+}
+
+// 일봉 차트의 마지막 봉(=오늘)에 실시간 종가/거래량을 반영한다.
+function updateMainChartLive(price) {
+  if (!mainChart || currentPeriod !== 'D') return;
+  const [closeDataset, volumeDataset] = mainChart.data.datasets;
+  const lastIdx = closeDataset.data.length - 1;
+  if (lastIdx < 0) return;
+
+  closeDataset.data[lastIdx] = price.currentPrice;
+  volumeDataset.data[lastIdx] = price.volume;
+  mainChart.update('none');
 }
 
 // ─── Render Detail ────────────────────────────────────────────────────────────
@@ -317,6 +378,7 @@ function removeFromWatchlist(symbol) {
   saveWatchlist();
   if (currentSymbol === symbol) {
     currentSymbol = null;
+    stopDetailPolling();
     document.getElementById('detail-section').classList.add('hidden');
     if (mainChart) { mainChart.destroy(); mainChart = null; }
   }
@@ -345,6 +407,7 @@ document.getElementById('detail-close').addEventListener('click', () => {
   document.getElementById('detail-section').classList.add('hidden');
   document.querySelectorAll('.stock-card').forEach((c) => c.classList.remove('active'));
   currentSymbol = null;
+  stopDetailPolling();
   if (mainChart) { mainChart.destroy(); mainChart = null; }
 });
 
