@@ -10,13 +10,28 @@ const api = {
     if (!res.ok) throw new Error((await res.json()).error);
     return res.json();
   },
-  async getHistory(symbol, period = 'D', count = 60) {
-    const res = await fetch(`/api/stocks/${symbol}/history?period=${period}&count=${count}`);
+  async getHistory(symbol, period = 'D', count = 60, before) {
+    const params = new URLSearchParams({ period, count });
+    if (before) params.set('before', before);
+    const res = await fetch(`/api/stocks/${symbol}/history?${params}`);
     if (!res.ok) throw new Error((await res.json()).error);
     return res.json();
   },
   async getBrokerageInfo() {
     const res = await fetch('/api/stocks/info');
+    return res.json();
+  },
+  // 브로커리지가 지원하지 않으면 501 → null 반환 (에러로 취급하지 않음)
+  async getOrderbook(symbol) {
+    const res = await fetch(`/api/stocks/${symbol}/orderbook`);
+    if (res.status === 501) return null;
+    if (!res.ok) throw new Error((await res.json()).error);
+    return res.json();
+  },
+  async getBuySell(symbol) {
+    const res = await fetch(`/api/stocks/${symbol}/buy-sell`);
+    if (res.status === 501) return null;
+    if (!res.ok) throw new Error((await res.json()).error);
     return res.json();
   },
 };
@@ -31,8 +46,23 @@ const sparklineCharts = new Map(); // symbol → Chart
 // ─── 실시간 폴링 (토스 Open API는 REST만 제공하므로 주기적으로 다시 조회) ───────
 const DETAIL_POLL_MS = 5000;
 const GRID_POLL_MS = 10000;
+const INTRADAY_REFRESH_MS = 30000;
+const INTRADAY_PERIODS = ['1m', '5m', '15m'];
 let detailPollTimer = null;
 let gridPollTimer = null;
+let intradayPollTimer = null;
+
+function defaultCountForPeriod(period) {
+  return INTRADAY_PERIODS.includes(period) ? 100 : 60;
+}
+
+// ─── 메인 차트 가로 스크롤 / 과거 데이터 이어보기 ───────────────────────────────
+const CHART_PX_PER_BAR = { intraday: 6, default: 8 };
+const CHART_EDGE_LOAD_THRESHOLD_PX = 60;
+let historyData = []; // 현재 차트에 로드된 전체 캔들 (오래된 → 최신)
+let loadingOlderHistory = false;
+let noMoreOlderHistory = false;
+let suppressChartScrollEvent = false;
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function fmt(num) {
@@ -222,12 +252,103 @@ async function selectStock(symbol) {
     renderMainChart(history);
     updateWatchlistBtn(symbol);
     startDetailPolling(symbol);
+    loadMarketDepth(symbol);
   } catch (e) {
     alert('종목 조회 오류: ' + e.message);
     return;
   }
 
   detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ─── 호가 / 매수·매도 체결강도 ─────────────────────────────────────────────────
+async function loadMarketDepth(symbol) {
+  const obBody = document.getElementById('orderbook-body');
+  const obUnsupported = document.getElementById('orderbook-unsupported');
+  const bsBody = document.getElementById('buysell-body');
+  const bsUnsupported = document.getElementById('buysell-unsupported');
+
+  try {
+    const ob = await api.getOrderbook(symbol);
+    if (ob) {
+      obBody.classList.remove('hidden');
+      obUnsupported.classList.add('hidden');
+      renderOrderbook(ob);
+    } else {
+      obBody.classList.add('hidden');
+      obUnsupported.classList.remove('hidden');
+    }
+  } catch {
+    obBody.classList.add('hidden');
+    obUnsupported.classList.remove('hidden');
+  }
+
+  try {
+    const bs = await api.getBuySell(symbol);
+    if (bs) {
+      bsBody.classList.remove('hidden');
+      bsUnsupported.classList.add('hidden');
+      renderBuySell(bs);
+    } else {
+      bsBody.classList.add('hidden');
+      bsUnsupported.classList.remove('hidden');
+    }
+  } catch {
+    bsBody.classList.add('hidden');
+    bsUnsupported.classList.remove('hidden');
+  }
+}
+
+function depthRowHtml(level, maxVolume, side) {
+  const pct = Math.max(2, Math.round((level.volume / maxVolume) * 100));
+  return `
+    <div class="depth-row ${side}">
+      <span class="depth-bar" style="width:${pct}%"></span>
+      <span class="depth-price">${fmt(level.price)}</span>
+      <span class="depth-volume">${fmt(level.volume)}</span>
+    </div>`;
+}
+
+function renderOrderbook(ob) {
+  const body = document.getElementById('orderbook-body');
+  const maxVolume = Math.max(1, ...ob.asks.map((l) => l.volume), ...ob.bids.map((l) => l.volume));
+
+  // 매도호가는 높은 가격이 위, 최우선 매도호가가 구분선 바로 위에 오도록 역순 배치
+  const askRows = [...ob.asks].reverse().map((l) => depthRowHtml(l, maxVolume, 'ask')).join('');
+  const bidRows = ob.bids.map((l) => depthRowHtml(l, maxVolume, 'bid')).join('');
+
+  body.innerHTML = `${askRows}<div class="orderbook-divider"></div>${bidRows}`;
+}
+
+function renderBuySell(bs) {
+  const total = bs.buyVolume + bs.sellVolume || 1;
+  const buyPct = Math.round((bs.buyVolume / total) * 100);
+
+  document.getElementById('buysell-buy-bar').style.width = `${buyPct}%`;
+  document.getElementById('buysell-sell-bar').style.width = `${100 - buyPct}%`;
+  document.getElementById('buysell-buy-value').textContent = `${fmt(bs.buyVolume)} (${buyPct}%)`;
+  document.getElementById('buysell-sell-value').textContent = `${fmt(bs.sellVolume)} (${100 - buyPct}%)`;
+}
+
+// ─── 분봉 실시간 갱신 (1분/5분/15분 조회 중일 때 차트 전체를 주기적으로 다시 조회) ──
+function stopIntradayPolling() {
+  if (intradayPollTimer) { clearInterval(intradayPollTimer); intradayPollTimer = null; }
+}
+
+function startIntradayPolling(symbol, period) {
+  stopIntradayPolling();
+  if (!INTRADAY_PERIODS.includes(period)) return;
+
+  intradayPollTimer = setInterval(async () => {
+    if (document.hidden || currentSymbol !== symbol || currentPeriod !== period) return;
+    // 사용자가 과거 구간을 스크롤해서 보고 있는 중이면 되돌리지 않고 다음 주기에 다시 확인한다.
+    if (!isChartPinnedToLatest()) return;
+    try {
+      renderMainChart(await api.getHistory(symbol, period, defaultCountForPeriod(period)));
+    } catch {
+      // 폴링 실패는 조용히 넘어가고 다음 주기에 재시도한다
+    }
+  }, INTRADAY_REFRESH_MS);
 }
 
 // 상세 화면이 열려있는 동안 현재가/거래량을 주기적으로 다시 조회해 갱신한다.
@@ -246,6 +367,7 @@ function startDetailPolling(symbol) {
     } catch {
       // 폴링 실패는 조용히 넘어가고 다음 주기에 재시도한다
     }
+    loadMarketDepth(symbol);
   }, DETAIL_POLL_MS);
 }
 
@@ -259,6 +381,15 @@ function updateMainChartLive(price) {
   closeDataset.data[lastIdx] = price.currentPrice;
   volumeDataset.data[lastIdx] = price.volume;
   mainChart.update('none');
+
+  const lastCandle = historyData[historyData.length - 1];
+  if (lastCandle) { lastCandle.close = price.currentPrice; lastCandle.volume = price.volume; }
+}
+
+// 사용자가 차트를 과거 쪽으로 스크롤해 둔 상태인지 확인 (거의 오른쪽 끝이면 "최신을 보고 있음")
+function isChartPinnedToLatest() {
+  const wrapper = document.getElementById('chart-wrapper');
+  return wrapper.scrollLeft + wrapper.clientWidth >= wrapper.scrollWidth - CHART_EDGE_LOAD_THRESHOLD_PX;
 }
 
 // ─── Render Detail ────────────────────────────────────────────────────────────
@@ -285,13 +416,44 @@ function renderStockInfo(p) {
   document.getElementById('market-cap').textContent = fmtCap(p.marketCap);
 }
 
+// 새로 종목/기간을 선택했을 때: 전체 데이터를 교체하고 최신(오른쪽) 위치로 스크롤한다.
 function renderMainChart(history) {
-  const labels = history.map((c) => c.date);
-  const closes = history.map((c) => c.close);
-  const volumes = history.map((c) => c.volume);
+  historyData = history;
+  loadingOlderHistory = false;
+  noMoreOlderHistory = false;
+  drawMainChart();
+
+  const wrapper = document.getElementById('chart-wrapper');
+  suppressChartScrollEvent = true;
+  wrapper.scrollLeft = wrapper.scrollWidth;
+  requestAnimationFrame(() => { suppressChartScrollEvent = false; });
+}
+
+// 왼쪽 끝까지 스크롤해서 불러온 과거 데이터를 앞에 이어붙인다. 스크롤 위치는 유지한다
+// (그렇지 않으면 데이터가 늘어날 때마다 화면이 오른쪽 끝으로 튕겨나간다).
+function prependOlderHistory(older) {
+  const wrapper = document.getElementById('chart-wrapper');
+  const oldScrollWidth = wrapper.scrollWidth;
+  const oldScrollLeft = wrapper.scrollLeft;
+
+  historyData = [...older, ...historyData];
+  drawMainChart();
+
+  wrapper.scrollLeft = oldScrollLeft + (wrapper.scrollWidth - oldScrollWidth);
+}
+
+function drawMainChart() {
+  const labels = historyData.map((c) => c.date);
+  const closes = historyData.map((c) => c.close);
+  const volumes = historyData.map((c) => c.volume);
   const isUp = closes.length >= 2 ? closes[closes.length - 1] >= closes[0] : true;
   const lineColor = isUp ? '#26a69a' : '#ef5350';
   const fillColor = isUp ? 'rgba(38,166,154,0.1)' : 'rgba(239,83,80,0.1)';
+
+  const wrapper = document.getElementById('chart-wrapper');
+  const inner = document.getElementById('chart-inner');
+  const pxPerBar = INTRADAY_PERIODS.includes(currentPeriod) ? CHART_PX_PER_BAR.intraday : CHART_PX_PER_BAR.default;
+  inner.style.width = `${Math.max(wrapper.clientWidth, historyData.length * pxPerBar)}px`;
 
   if (mainChart) mainChart.destroy();
 
@@ -361,6 +523,41 @@ function renderMainChart(history) {
   });
 }
 
+// 차트를 왼쪽 끝까지 스크롤하면 그 이전 구간을 더 불러와 이어붙인다.
+async function maybeLoadOlderHistory() {
+  if (loadingOlderHistory || noMoreOlderHistory || !currentSymbol || historyData.length === 0) return;
+
+  const oldest = historyData[0];
+  if (!oldest.rawTimestamp) { noMoreOlderHistory = true; return; } // 이 브로커리지/구간은 과거 이어보기 미지원
+
+  loadingOlderHistory = true;
+  document.getElementById('chart-loading-older').classList.remove('hidden');
+
+  try {
+    const older = await api.getHistory(currentSymbol, currentPeriod, defaultCountForPeriod(currentPeriod), oldest.rawTimestamp);
+    // before는 경계 시점을 포함해 반환될 수 있어, 이미 있는 가장 오래된 봉과 겹치는 항목은 제외한다.
+    const deduped = older.filter((c) => !c.rawTimestamp || c.rawTimestamp < oldest.rawTimestamp);
+    if (deduped.length === 0) {
+      noMoreOlderHistory = true;
+    } else {
+      prependOlderHistory(deduped);
+    }
+  } catch {
+    // 실패 시 다음 스크롤 시도에서 다시 불러온다
+  } finally {
+    loadingOlderHistory = false;
+    document.getElementById('chart-loading-older').classList.add('hidden');
+  }
+}
+
+document.getElementById('chart-wrapper').addEventListener('scroll', (e) => {
+  // "최신으로 스크롤"처럼 코드가 스스로 scrollLeft를 옮긴 경우는 무시한다. 그렇지 않으면 막대 수가
+  // 적어 실제로는 스크롤할 내용이 없을 때(scrollLeft가 0으로 clamp됨)도 매번 과거 데이터를
+  // 잘못 이어붙이게 된다.
+  if (suppressChartScrollEvent) return;
+  if (e.target.scrollLeft < CHART_EDGE_LOAD_THRESHOLD_PX) maybeLoadOlderHistory();
+});
+
 // ─── Watchlist Management ─────────────────────────────────────────────────────
 function saveWatchlist() {
   localStorage.setItem('watchlist', JSON.stringify(watchlist));
@@ -379,6 +576,7 @@ function removeFromWatchlist(symbol) {
   if (currentSymbol === symbol) {
     currentSymbol = null;
     stopDetailPolling();
+    stopIntradayPolling();
     document.getElementById('detail-section').classList.add('hidden');
     if (mainChart) { mainChart.destroy(); mainChart = null; }
   }
@@ -408,6 +606,7 @@ document.getElementById('detail-close').addEventListener('click', () => {
   document.querySelectorAll('.stock-card').forEach((c) => c.classList.remove('active'));
   currentSymbol = null;
   stopDetailPolling();
+  stopIntradayPolling();
   if (mainChart) { mainChart.destroy(); mainChart = null; }
 });
 
@@ -419,7 +618,8 @@ document.querySelectorAll('.period-tab').forEach((btn) => {
     btn.classList.add('active');
     currentPeriod = btn.dataset.period;
     try {
-      renderMainChart(await api.getHistory(currentSymbol, currentPeriod));
+      renderMainChart(await api.getHistory(currentSymbol, currentPeriod, defaultCountForPeriod(currentPeriod)));
+      startIntradayPolling(currentSymbol, currentPeriod);
     } catch (e) {
       alert('차트 조회 오류: ' + e.message);
     }

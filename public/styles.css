@@ -270,13 +270,97 @@ body {
 .stat-label { color: var(--text-muted); font-size: 11px; }
 .stat-value { font-weight: 600; font-size: 14px; }
 
+/* ─── 호가 & 매수/매도 체결강도 ────────────── */
+.depth-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+@media (max-width: 600px) { .depth-grid { grid-template-columns: 1fr; } }
+.depth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.depth-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.depth-badge {
+  background: var(--surface2);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+.depth-unsupported { color: var(--text-muted); font-size: 12px; }
+
+.orderbook-body { display: flex; flex-direction: column; gap: 1px; }
+.orderbook-divider { height: 8px; }
+.depth-row {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 6px;
+  font-size: 12px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.depth-row .depth-bar {
+  position: absolute;
+  top: 0; bottom: 0; right: 0;
+  background: rgba(239, 83, 80, 0.14);
+  z-index: 0;
+}
+.depth-row.bid .depth-bar { background: rgba(38, 166, 154, 0.14); left: 0; right: auto; }
+.depth-row .depth-price, .depth-row .depth-volume { position: relative; z-index: 1; }
+.depth-row.ask .depth-price { color: var(--down); }
+.depth-row.bid .depth-price { color: var(--up); }
+.depth-row .depth-volume { color: var(--text-muted); }
+
+.buysell-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface2);
+  margin-bottom: 8px;
+}
+.buysell-buy { background: var(--up); }
+.buysell-sell { background: var(--down); }
+.buysell-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.legend-dot.buy { background: var(--up); }
+.legend-dot.sell { background: var(--down); }
+.depth-note { color: var(--text-muted); font-size: 11px; margin-top: 8px; line-height: 1.5; }
+
 .chart-section {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
 }
-.period-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.period-tabs { display: flex; align-items: center; gap: 4px; margin-bottom: 12px; }
+.period-tabs-divider { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
 .period-tab {
   background: none;
   border: 1px solid var(--border);
@@ -292,7 +376,27 @@ body {
   color: #fff;
   border-color: var(--accent);
 }
-.chart-wrapper { position: relative; height: 280px; }
+.chart-wrapper {
+  position: relative;
+  height: 280px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.chart-inner { height: 100%; }
+.chart-inner canvas { display: block; }
+.chart-loading-older {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+.chart-hint { color: var(--text-muted); font-size: 11px; margin-top: 8px; }
 
 .empty-msg { color: var(--text-muted); font-size: 13px; padding: 20px 0; }
 .hidden { display: none !important; }

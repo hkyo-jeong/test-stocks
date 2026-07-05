@@ -118,7 +118,12 @@ export class KISAdapter implements BrokerageAdapter {
     };
   }
 
-  async getStockHistory(symbol: string, period: Period, count = 60): Promise<CandleData[]> {
+  // before: 과거 데이터 이어보기 커서. KIS 어댑터는 아직 미구현이라 무시하고 항상 최신 구간만 반환한다.
+  async getStockHistory(symbol: string, period: Period, count = 60, _before?: string): Promise<CandleData[]> {
+    if (period === '1m' || period === '5m' || period === '15m') {
+      throw new Error('한국투자증권 어댑터는 분봉 조회를 지원하지 않습니다.');
+    }
+
     await this.ensureToken();
 
     let res;

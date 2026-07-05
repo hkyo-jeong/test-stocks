@@ -70,15 +70,47 @@
             <div class="stat"><span class="stat-label">시가총액</span><span id="market-cap" class="stat-value"></span></div>
           </div>
 
+          <!-- 호가 & 매수/매도 체결강도 -->
+          <div class="depth-grid">
+            <div class="depth-card">
+              <h3 class="depth-title">호가</h3>
+              <div id="orderbook-body" class="orderbook-body hidden"></div>
+              <p id="orderbook-unsupported" class="depth-unsupported hidden">이 브로커리지는 호가 조회를 지원하지 않습니다.</p>
+            </div>
+            <div class="depth-card">
+              <h3 class="depth-title">매수 · 매도 체결강도 <span class="depth-badge">추정</span></h3>
+              <div id="buysell-body" class="buysell-body hidden">
+                <div class="buysell-bar">
+                  <div id="buysell-buy-bar" class="buysell-buy"></div>
+                  <div id="buysell-sell-bar" class="buysell-sell"></div>
+                </div>
+                <div class="buysell-legend">
+                  <span><span class="legend-dot buy"></span>매수 <b id="buysell-buy-value">-</b></span>
+                  <span><span class="legend-dot sell"></span>매도 <b id="buysell-sell-value">-</b></span>
+                </div>
+                <p class="depth-note">직전 체결가 대비 상승 체결=매수, 하락 체결=매도로 근사한 값입니다. 실제 매수/매도 체결 주체와 다를 수 있습니다.</p>
+              </div>
+              <p id="buysell-unsupported" class="depth-unsupported hidden">이 브로커리지는 매수/매도 추정을 지원하지 않습니다.</p>
+            </div>
+          </div>
+
           <div class="chart-section">
             <div class="period-tabs">
+              <button class="period-tab" data-period="1m">1분</button>
+              <button class="period-tab" data-period="5m">5분</button>
+              <button class="period-tab" data-period="15m">15분</button>
+              <span class="period-tabs-divider"></span>
               <button class="period-tab active" data-period="D">일봉</button>
               <button class="period-tab" data-period="W">주봉</button>
               <button class="period-tab" data-period="M">월봉</button>
             </div>
-            <div class="chart-wrapper">
-              <canvas id="price-chart"></canvas>
+            <div class="chart-wrapper" id="chart-wrapper">
+              <div id="chart-loading-older" class="chart-loading-older hidden">과거 데이터 불러오는 중…</div>
+              <div class="chart-inner" id="chart-inner">
+                <canvas id="price-chart"></canvas>
+              </div>
             </div>
+            <p class="chart-hint">차트를 좌우로 스크롤하면 다른 시간대·날짜를 볼 수 있습니다.</p>
           </div>
         </div>
       </section>

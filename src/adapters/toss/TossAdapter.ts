@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import { BrokerageAdapter } from '../BrokerageAdapter';
-import { CandleData, Period, SearchResult, StockPrice } from '../../types/stock';
+import { BuySellSummary, CandleData, Orderbook, Period, SearchResult, StockPrice } from '../../types/stock';
 import { searchStockList } from '../kis/stockList';
 import {
   TossAccount,
@@ -332,10 +332,14 @@ export class TossAdapter implements BrokerageAdapter {
     };
   }
 
-  async getStockHistory(symbol: string, period: Period, count = 60): Promise<CandleData[]> {
+  async getStockHistory(symbol: string, period: Period, count = 60, before?: string): Promise<CandleData[]> {
+    if (period === '1m' || period === '5m' || period === '15m') {
+      return this.getIntradayHistory(symbol, period, count, before);
+    }
+
     // Toss 캔들 API는 1m | 1d 인터벌만 지원. 주/월봉은 일봉을 모아 직접 집계한다.
     const dailyCount = period === 'D' ? Math.min(count, 200) : 200;
-    const { candles } = await this.getCandles(symbol, '1d', { count: dailyCount });
+    const { candles } = await this.getCandles(symbol, '1d', { count: dailyCount, before });
 
     const daily: CandleData[] = candles
       .map((c) => ({
@@ -345,8 +349,9 @@ export class TossAdapter implements BrokerageAdapter {
         low: Number(c.lowPrice),
         close: Number(c.closePrice),
         volume: Number(c.volume),
+        rawTimestamp: c.timestamp,
       }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort((a, b) => a.rawTimestamp.localeCompare(b.rawTimestamp));
 
     if (period === 'D') return daily.slice(-count);
 
@@ -374,9 +379,124 @@ export class TossAdapter implements BrokerageAdapter {
       low: Math.min(...group.map((c) => c.low)),
       close: group[group.length - 1].close,
       volume: group.reduce((sum, c) => sum + c.volume, 0),
+      rawTimestamp: group[0].rawTimestamp,
     }));
 
     return aggregated.slice(-count);
+  }
+
+  // Toss는 1분봉만 제공(최대 200개)하므로 5분/15분은 1분봉을 모아 직접 집계한다.
+  // 200개 제한으로 조회 가능한 구간은 한 번에 최근 최대 약 200분(1분봉 기준)이며,
+  // before 커서로 이어서 호출하면 더 과거 구간을 계속 가져올 수 있다.
+  private async getIntradayHistory(
+    symbol: string,
+    period: '1m' | '5m' | '15m',
+    count: number,
+    before?: string
+  ): Promise<CandleData[]> {
+    const { candles } = await this.getCandles(symbol, '1m', { count: 200, before });
+
+    const minute: Array<CandleData & { rawTimestamp: string }> = candles
+      .map((c) => ({
+        date: c.timestamp.slice(11, 16), // HH:mm (거래소 로컬 시각, 화면 표시용)
+        open: Number(c.openPrice),
+        high: Number(c.highPrice),
+        low: Number(c.lowPrice),
+        close: Number(c.closePrice),
+        volume: Number(c.volume),
+        rawTimestamp: c.timestamp,
+      }))
+      .sort((a, b) => a.rawTimestamp.localeCompare(b.rawTimestamp));
+
+    if (period === '1m') return minute.slice(-count);
+
+    // 날짜(YYYY-MM-DD)까지 포함해 버킷 키를 만들어야 여러 거래일에 걸친 데이터를 이어 볼 때
+    // 서로 다른 날의 같은 시각(HH:mm) 봉이 하나로 뭉치지 않는다.
+    const bucketMinutes = period === '5m' ? 5 : 15;
+    const bucketKey = (rawTimestamp: string): string => {
+      const datePart = rawTimestamp.slice(0, 10);
+      const [h, m] = rawTimestamp.slice(11, 16).split(':').map(Number);
+      const flo = Math.floor((h * 60 + m) / bucketMinutes) * bucketMinutes;
+      const hhmm = `${String(Math.floor(flo / 60)).padStart(2, '0')}:${String(flo % 60).padStart(2, '0')}`;
+      return `${datePart} ${hhmm}`;
+    };
+
+    const buckets = new Map<string, Array<CandleData & { rawTimestamp: string }>>();
+    for (const candle of minute) {
+      const key = bucketKey(candle.rawTimestamp);
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(candle);
+      else buckets.set(key, [candle]);
+    }
+
+    const aggregated: Array<CandleData & { rawTimestamp: string }> = [...buckets.entries()].map(([key, group]) => ({
+      date: key.slice(11), // HH:mm (표시용)
+      open: group[0].open,
+      high: Math.max(...group.map((c) => c.high)),
+      low: Math.min(...group.map((c) => c.low)),
+      close: group[group.length - 1].close,
+      volume: group.reduce((sum, c) => sum + c.volume, 0),
+      rawTimestamp: group[0].rawTimestamp,
+    }));
+
+    return aggregated
+      .sort((a, b) => a.rawTimestamp.localeCompare(b.rawTimestamp))
+      .slice(-count);
+  }
+
+  // 호가 잔량. 매도호가는 낮은 가격순, 매수호가는 높은 가격순으로 정렬해 반환한다.
+  async getOrderbookSummary(symbol: string): Promise<Orderbook> {
+    const raw = await this.getOrderbook(symbol);
+    return {
+      timestamp: raw.timestamp,
+      currency: raw.currency,
+      asks: [...raw.asks]
+        .map((l) => ({ price: Number(l.price), volume: Number(l.volume) }))
+        .sort((a, b) => a.price - b.price),
+      bids: [...raw.bids]
+        .map((l) => ({ price: Number(l.price), volume: Number(l.volume) }))
+        .sort((a, b) => b.price - a.price),
+    };
+  }
+
+  // 최근 체결 내역의 등락(틱 룰)으로 매수/매도 체결량을 근사한다.
+  // 직전 체결가보다 오르면 매수 주도, 내리면 매도 주도로 분류하고, 동일가는 직전 분류를 이어간다.
+  // Toss API가 체결 주체를 직접 제공하지 않아 만든 추정치이며 실제 매수/매도와 다를 수 있다.
+  async getBuySellSummary(symbol: string): Promise<BuySellSummary> {
+    const trades = await this.getTrades(symbol, 50);
+    const sorted = [...trades].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+    let buyVolume = 0;
+    let sellVolume = 0;
+    let classifiedTrades = 0;
+    let lastPrice: number | null = null;
+    let lastSide: 'BUY' | 'SELL' | null = null;
+
+    for (const trade of sorted) {
+      const price = Number(trade.price);
+      const volume = Number(trade.volume);
+      let side: 'BUY' | 'SELL' | null = null;
+
+      if (lastPrice != null) {
+        if (price > lastPrice) side = 'BUY';
+        else if (price < lastPrice) side = 'SELL';
+        else side = lastSide;
+      }
+
+      if (side === 'BUY') { buyVolume += volume; classifiedTrades += 1; }
+      else if (side === 'SELL') { sellVolume += volume; classifiedTrades += 1; }
+
+      if (side) lastSide = side;
+      lastPrice = price;
+    }
+
+    return {
+      buyVolume,
+      sellVolume,
+      sampleTrades: sorted.length,
+      classifiedTrades,
+      estimated: true,
+    };
   }
 
   async searchStocks(query: string): Promise<SearchResult[]> {
