@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>주식 정보</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <header class="header">
+      <h1 class="logo">📈 주식 정보</h1>
+      <div id="brokerage-badge" class="badge"></div>
+    </header>
+
+    <main class="main">
+      <!-- 검색 -->
+      <section class="search-section">
+        <div class="search-box">
+          <input id="search-input" type="text" placeholder="종목명 또는 코드 검색 (예: 삼성전자, 005930)" />
+          <button id="search-btn">검색</button>
+        </div>
+        <ul id="search-results" class="search-results hidden"></ul>
+      </section>
+
+      <!-- 관심종목 그리드 -->
+      <section class="grid-section">
+        <div class="grid-section-header">
+          <h2 class="section-title">관심종목</h2>
+          <span id="watchlist-count" class="count-badge hidden"></span>
+        </div>
+        <div id="stocks-grid" class="stocks-grid"></div>
+        <p id="grid-empty" class="empty-msg">
+          종목을 검색한 뒤 ☆ 버튼으로 추가하면 여기서 한눈에 볼 수 있습니다.
+        </p>
+      </section>
+
+      <!-- 종목 상세 (선택 시 노출) -->
+      <section id="detail-section" class="detail-section hidden">
+        <div class="detail-inner">
+          <div class="detail-top-row">
+            <div>
+              <h2 id="stock-name" class="stock-name"></h2>
+              <span id="stock-symbol" class="stock-symbol"></span>
+              <span id="stock-market" class="stock-market"></span>
+            </div>
+            <div class="detail-actions">
+              <button id="watchlist-btn" class="watchlist-btn" title="관심종목">☆</button>
+              <button id="detail-close" class="close-btn" title="닫기">✕</button>
+            </div>
+          </div>
+
+          <div class="price-card">
+            <div class="current-price-row">
+              <span id="current-price" class="current-price"></span>
+              <span id="currency" class="currency"></span>
+            </div>
+            <div class="change-row">
+              <span id="change-price" class="change"></span>
+              <span id="change-rate" class="change"></span>
+            </div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat"><span class="stat-label">시가</span><span id="open-price" class="stat-value"></span></div>
+            <div class="stat"><span class="stat-label">고가</span><span id="high-price" class="stat-value up"></span></div>
+            <div class="stat"><span class="stat-label">저가</span><span id="low-price" class="stat-value down"></span></div>
+            <div class="stat"><span class="stat-label">전일종가</span><span id="prev-price" class="stat-value"></span></div>
+            <div class="stat"><span class="stat-label">거래량</span><span id="volume" class="stat-value"></span></div>
+            <div class="stat"><span class="stat-label">시가총액</span><span id="market-cap" class="stat-value"></span></div>
+          </div>
+
+          <div class="chart-section">
+            <div class="period-tabs">
+              <button class="period-tab active" data-period="D">일봉</button>
+              <button class="period-tab" data-period="W">주봉</button>
+              <button class="period-tab" data-period="M">월봉</button>
+            </div>
+            <div class="chart-wrapper">
+              <canvas id="price-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx ts-node *)",
+      "Bash(curl -s http://localhost:3000/api/stocks/info)",
+      "Bash(curl -s \"http://localhost:3000/api/stocks/search?q=삼성\")",
+      "Bash(curl -s \"http://localhost:3000/api/stocks/005930\")",
+      "Bash(curl -s \"http://localhost:3000/api/stocks/005930/history?period=D&count=5\")",
+      "Bash(pkill -f \"ts-node src/server.ts\")",
+      "Bash(npx tsc *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s \"http://localhost:3000/api/stocks/search?q=035420\")",
+      "Bash(lsof -ti:3000)",
+      "Bash(xargs kill -9)",
+      "Bash(curl -s \"http://localhost:3000/api/stocks/search?q=LG\")",
+      "Bash(curl -sv \"http://localhost:3000/api/stocks/search?q=%EC%82%BC%EC%84%B1\")",
+      "Skill(run)",
+      "Skill(run:*)"
+    ]
+  }
+}
