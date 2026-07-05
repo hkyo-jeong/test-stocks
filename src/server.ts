@@ -13,9 +13,14 @@ const adapter = createAdapter(brokerageName);
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api/stocks', createStockRoutes(adapter));
+
+const clientDist = path.join(__dirname, '..', 'client');
+app.use(express.static(clientDist));
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
 
 app.listen(PORT, () => {
   console.log(`[${adapter.name}] 서버 실행 중: http://localhost:${PORT}`);
